@@ -4,6 +4,7 @@ import { PDFDownloadLink } from "@react-pdf/renderer";
 import supabase from "../lib/supabase";
 import studentsAnalyzer from "../lib/ai";
 import GradesReportPDF from "../components/gradesreportPDF";
+import toast, { Toaster } from "react-hot-toast";
 
 export default function GradesPage() {
   const [subjects, setSubjects] = useState([]);
@@ -15,7 +16,9 @@ export default function GradesPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
 
-  useEffect(() => { fetchSubjects(); }, []);
+  useEffect(() => {
+    fetchSubjects();
+  }, []);
 
   const fetchSubjects = async () => {
     const { data, error } = await supabase.from("subjects").select("*");
@@ -85,77 +88,82 @@ export default function GradesPage() {
 
   const calculateTotalGrade = (grade) => {
     const { prelim, midterm, semifinal, final } = grade;
-    const scores = [prelim, midterm, semifinal, final].map(Number).filter(n => !isNaN(n));
+    const scores = [prelim, midterm, semifinal, final].map(Number).filter((n) => !isNaN(n));
     if (!scores.length) return "";
     const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
     return avg.toFixed(2);
   };
 
   const handleSaveGrades = async () => {
-  if (!selectedSubject) {
-    alert("Please select a subject first.");
-    return;
-  }
+    if (!selectedSubject) {
+      toast.error("Please select a subject first.");
+      return;
+    }
 
-  setSaving(true);
+    setSaving(true);
+    const savingToast = toast.loading("Saving grades...");
 
-  try {
-    const { data: existingGrades, error: fetchError } = await supabase
-      .from("grades")
-      .select("*")
-      .eq("subject_id", selectedSubject);
+    try {
+      const { data: existingGrades, error: fetchError } = await supabase
+        .from("grades")
+        .select("*")
+        .eq("subject_id", selectedSubject);
 
-    if (fetchError) throw fetchError;
+      if (fetchError) throw fetchError;
 
-    const gradesToUpdate = [];
-    const gradesToInsert = [];
+      const gradesToUpdate = [];
+      const gradesToInsert = [];
 
-    Object.entries(grades).forEach(([studentId, g]) => {
-      const payload = {
-        student_id: parseFloat(studentId),
-        subject_id: parseFloat(selectedSubject),
-        prelim: parseFloat(g.prelim) || null,
-        midterm: parseFloat(g.midterm) || null,
-        semifinal: parseFloat(g.semifinal) || null,
-        final: parseFloat(g.final) || null,
-      };
-      const existing = existingGrades.find(
-        (eg) => eg.student_id === parseInt(studentId)
-      );
+      Object.entries(grades).forEach(([studentId, g]) => {
+        const payload = {
+          student_id: parseFloat(studentId),
+          subject_id: parseFloat(selectedSubject),
+          prelim: parseFloat(g.prelim) || null,
+          midterm: parseFloat(g.midterm) || null,
+          semifinal: parseFloat(g.semifinal) || null,
+          final: parseFloat(g.final) || null,
+        };
+        const existing = existingGrades.find((eg) => eg.student_id === parseInt(studentId));
 
-      if (existing) {
-        payload.id = existing.id;
-        gradesToUpdate.push(payload);
-      } else {
-        gradesToInsert.push(payload);
-      }
-    });
-
-    if (gradesToUpdate.length > 0) {
-      const { error: updateError } = await supabase.from("grades").upsert(gradesToUpdate, {
-        onConflict: ["id"],
+        if (existing) {
+          payload.id = existing.id;
+          gradesToUpdate.push(payload);
+        } else {
+          gradesToInsert.push(payload);
+        }
       });
-      if (updateError) throw updateError;
+
+      if (gradesToUpdate.length > 0) {
+        const { error: updateError } = await supabase.from("grades").upsert(gradesToUpdate, {
+          onConflict: ["id"],
+        });
+        if (updateError) throw updateError;
+      }
+
+      if (gradesToInsert.length > 0) {
+        const { error: insertError } = await supabase.from("grades").insert(gradesToInsert);
+        if (insertError) throw insertError;
+      }
+
+      toast.success("Grades saved successfully!", {
+        id: savingToast,
+        style: { background: "#ffffffff", color: "#000000ff" },
+      });
+
+      fetchEnrolledStudents(selectedSubject);
+    } catch (err) {
+      console.error("Save grades error:", err);
+      toast.error("Something went wrong while saving grades.", {
+        id: savingToast,
+        style: { background: "#ffffffff", color: "#000000ff" },
+      });
+    } finally {
+      setSaving(false);
     }
-
-    if (gradesToInsert.length > 0) {
-      const { error: insertError } = await supabase.from("grades").insert(gradesToInsert);
-      if (insertError) throw insertError;
-    }
-
-    alert("✅ Grades saved successfully!");
-
-    fetchEnrolledStudents(selectedSubject);
-  } catch (err) {
-    console.error("Save grades error:", err);
-    alert("❌ Something went wrong while saving grades.");
-  } finally {
-    setSaving(false);
-  }
-};
+  };
 
   const handleGenerateReport = async () => {
-    if (!selectedSubject) return alert("Please select a subject first.");
+    if (!selectedSubject) return toast.error("Please select a subject first.");
     setAnalyzing(true);
     setAnalysis(null);
     const result = await studentsAnalyzer(selectedSubject);
@@ -165,6 +173,9 @@ export default function GradesPage() {
 
   return (
     <div className="min-h-screen bg-white p-8">
+      {/* ✅ Toaster for react-hot-toast */}
+      <Toaster position="top-right" reverseOrder={false} />
+
       <div className="max-w-6xl mx-auto">
         <div className="bg-white rounded-xl shadow-2xl overflow-hidden">
           <div className="bg-green-600 p-6">
@@ -214,7 +225,12 @@ export default function GradesPage() {
                       const total = calculateTotalGrade(grades[s.id] || {});
                       const status = total ? (parseFloat(total) <= 3 ? "Passed" : "Failed") : "";
                       return (
-                        <tr key={s.id} className={`${index % 2 === 0 ? "bg-gray-50" : "bg-white"} hover:bg-green-50 transition`}>
+                        <tr
+                          key={s.id}
+                          className={`${
+                            index % 2 === 0 ? "bg-gray-50" : "bg-white"
+                          } hover:bg-green-50 transition`}
+                        >
                           <td className="px-6 py-3 border-b border-gray-200 font-medium">{s.name}</td>
                           {["prelim", "midterm", "semifinal", "final"].map((field) => (
                             <td key={field} className="px-4 py-3 border-b border-gray-200 text-center">
@@ -229,7 +245,11 @@ export default function GradesPage() {
                               />
                             </td>
                           ))}
-                          <td className={`px-4 py-3 border-b border-gray-200 text-center font-bold ${status === "Failed" ? "text-red-600" : "text-green-700"}`}>
+                          <td
+                            className={`px-4 py-3 border-b border-gray-200 text-center font-bold ${
+                              status === "Failed" ? "text-red-600" : "text-green-700"
+                            }`}
+                          >
                             {total}
                           </td>
                         </tr>
@@ -247,7 +267,15 @@ export default function GradesPage() {
                   disabled={saving}
                   className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition shadow-md font-semibold"
                 >
-                  {saving ? <><Loader2 className="animate-spin" size={20} /> Saving...</> : <><Save size={20} /> Save Grades</>}
+                  {saving ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} /> Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={20} /> Save Grades
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -255,48 +283,58 @@ export default function GradesPage() {
                   disabled={analyzing}
                   className="flex items-center gap-2 bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition shadow-md font-semibold"
                 >
-                  {analyzing ? <><Loader2 className="animate-spin" size={20} /> Analyzing...</> : <><FileText size={20} /> Generate AI Report</>}
+                  {analyzing ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} /> Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <FileText size={20} /> Generate AI Report
+                    </>
+                  )}
                 </button>
-{analysis && (
-  (() => {
-    const subject = subjects.find((s) => s.id === parseInt(selectedSubject)) || {};
-    const subjectName = subject.subject_name || subject.name || "Subject";
 
-    return (
-      <PDFDownloadLink
-        document={
-          <GradesReportPDF
-            subject={subject}
-            analysis={analysis.analysis}
-            students={students}
-          />
-        }
-        fileName={`${subjectName} - Grade Report.pdf`}
-      >
-        {({ loading }) => (
-          <button className="flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition shadow-md font-semibold">
-            {loading ? (
-              <>
-                <Loader2 className="animate-spin" size={20} /> Preparing PDF...
-              </>
-            ) : (
-              <>
-                <Download size={20} /> Download PDF
-              </>
-            )}
-          </button>
-        )}
-      </PDFDownloadLink>
-    );
-  })()
-)}
+                {analysis &&
+                  (() => {
+                    const subject =
+                      subjects.find((s) => s.id === parseInt(selectedSubject)) || {};
+                    const subjectName = subject.subject_name || subject.name || "Subject";
 
+                    return (
+                      <PDFDownloadLink
+                        document={
+                          <GradesReportPDF
+                            subject={subject}
+                            analysis={analysis.analysis}
+                            students={students}
+                          />
+                        }
+                        fileName={`${subjectName} - Grade Report.pdf`}
+                      >
+                        {({ loading }) => (
+                          <button className="flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition shadow-md font-semibold">
+                            {loading ? (
+                              <>
+                                <Loader2 className="animate-spin" size={20} /> Preparing PDF...
+                              </>
+                            ) : (
+                              <>
+                                <Download size={20} /> Download PDF
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </PDFDownloadLink>
+                    );
+                  })()}
               </div>
             )}
 
             {analysis && (
               <div className="mt-6 p-6 bg-green-50 border border-green-200 rounded-xl shadow-inner">
-                <h2 className="text-lg font-bold text-green-700 mb-2">📊 AI Grade Analysis Summary</h2>
+                <h2 className="text-lg font-bold text-green-700 mb-2">
+                  📊 AI Grade Analysis Summary
+                </h2>
                 <pre className="text-gray-700 whitespace-pre-wrap">{analysis.summaryText}</pre>
               </div>
             )}
